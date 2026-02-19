@@ -25,7 +25,7 @@ export async function unauthenticatedNoteTransfer(): Promise<void> {
     OutputNote,
   } = await import('@miden-sdk/miden-sdk');
 
-  const client = await WebClient.createClient('https://rpc.devnet.miden.io');
+  const client = await WebClient.createClient('https://rpc.testnet.miden.io');
   const prover = TransactionProver.newLocalProver();
 
   console.log('Latest block:', (await client.syncState()).blockNum());
@@ -39,7 +39,7 @@ export async function unauthenticatedNoteTransfer(): Promise<void> {
     true,
     AuthScheme.AuthRpoFalcon512,
   );
-  console.log('Alice accout ID:', alice.id().toString());
+  console.log('Alice account ID:', alice.id().toString());
 
   const wallets = [];
   for (let i = 0; i < 5; i++) {
@@ -130,11 +130,11 @@ export async function unauthenticatedNoteTransfer(): Promise<void> {
 
     console.log('Creating P2ID note...');
     {
+      const builder = new TransactionRequestBuilder();
+      const request = builder.withOwnOutputNotes(new OutputNoteArray([outputP2ID])).build();
       const txResult = await client.executeTransaction(
         sender.id(),
-        new TransactionRequestBuilder()
-          .withOwnOutputNotes(new OutputNoteArray([outputP2ID]))
-          .build(),
+        request,
       );
       const proven = await client.proveTransaction(txResult, prover);
       const submissionHeight = await client.submitProvenTransaction(
@@ -148,9 +148,8 @@ export async function unauthenticatedNoteTransfer(): Promise<void> {
 
     const noteIdAndArgs = new NoteAndArgs(p2idNote, null);
 
-    const consumeRequest = new TransactionRequestBuilder()
-      .withInputNotes(new NoteAndArgsArray([noteIdAndArgs]))
-      .build();
+    const consumeBuilder = new TransactionRequestBuilder();
+    const consumeRequest = consumeBuilder.withInputNotes(new NoteAndArgsArray([noteIdAndArgs])).build();
 
     {
       const txResult = await client.executeTransaction(
