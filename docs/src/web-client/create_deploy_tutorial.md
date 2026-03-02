@@ -88,6 +88,7 @@ react: { code: `// lib/react/createMintConsume.tsx
 'use client';
 
 import { MidenProvider, useMiden, useCreateWallet, useCreateFaucet } from '@miden-sdk/react';
+import { StorageMode } from '@miden-sdk/miden-sdk';
 
 function CreateMintConsumeInner() {
 .const { isReady } = useMiden();
@@ -123,16 +124,17 @@ export async function createMintConsume(): Promise<void> {
 .}
 
 .// dynamic import → only in the browser, so WASM is loaded client‑side
-.const { WebClient } =
+.const { MidenClient, AccountType, StorageMode } =
 ..await import('@miden-sdk/miden-sdk');
 
 .// Connect to Miden testnet RPC endpoint
-.const nodeEndpoint = 'https://rpc.testnet.miden.io';
-.const client = await WebClient.createClient(nodeEndpoint);
+.const client = await MidenClient.create({
+..rpcUrl: 'https://rpc.testnet.miden.io',
+.});
 
 .// 1. Sync with the latest blockchain state
 .// This fetches the latest block header and state commitments
-.const state = await client.syncState();
+.const state = await client.sync();
 .console.log('Latest block number:', state.blockNum());
 
 .// At this point, your client is connected and synchronized
@@ -209,7 +211,7 @@ Back in your library file, extend the function:
 react: { code: `const run = async () => {
 .// 1. Create Alice's wallet (public, mutable)
 .console.log('Creating account for Alice…');
-.const alice = await createWallet({ storageMode: 'public' });
+.const alice = await createWallet({ storageMode: StorageMode.Public });
 .console.log('Alice ID:', alice.id().toString());
 };` },
 typescript: { code: `// lib/createMintConsume.ts
@@ -219,24 +221,22 @@ export async function createMintConsume(): Promise<void> {
 ..return;
 .}
 
-.const { WebClient, AccountStorageMode, AuthScheme } = await import(
-.."@miden-sdk/miden-sdk"
-.);
+.const { MidenClient } = await import('@miden-sdk/miden-sdk');
 
-.const nodeEndpoint = 'https://rpc.testnet.miden.io';
-.const client = await WebClient.createClient(nodeEndpoint);
+.const client = await MidenClient.create({
+..rpcUrl: 'https://rpc.testnet.miden.io',
+.});
 
 .// 1. Sync with the latest blockchain state
-.const state = await client.syncState();
+.const state = await client.sync();
 .console.log('Latest block number:', state.blockNum());
 
 .// 2. Create Alice's account
 .console.log('Creating account for Alice…');
-.const alice = await client.newWallet(
-..AccountStorageMode.public(), // Public: account state is visible on-chain
-..true, // Mutable: account code can be upgraded later
-..AuthScheme.AuthRpoFalcon512 // Auth Scheme: RPO Falcon 512
-.);
+.const alice = await client.accounts.create({
+..type: AccountType.MutableWallet, // Mutable: account code can be upgraded later
+..storage: StorageMode.Public, // Public: account state is visible on-chain
+.});
 .console.log('Alice ID:', alice.id().toString());
 }` },
 }} reactFilename="lib/react/createMintConsume.tsx" tsFilename="lib/createMintConsume.ts" />
@@ -254,7 +254,7 @@ const faucet = await createFaucet({
 .tokenSymbol: 'MID', // Token symbol (like ETH, BTC, etc.)
 .decimals: 8, // Decimals (8 means 1 MID = 100,000,000 base units)
 .maxSupply: BigInt(1_000_000), // Max supply: total tokens that can ever be minted
-.storageMode: 'public', // Public: faucet operations are transparent
+.storageMode: StorageMode.Public, // Public: faucet operations are transparent
 });
 console.log('Faucet account ID:', faucet.id().toString());
 
@@ -262,14 +262,13 @@ console.log('Setup complete.');`},
   typescript: { code:`// 3. Deploy a fungible faucet
 // A faucet is an account that can mint new tokens
 console.log('Creating faucet…');
-const faucetAccount = await client.newFaucet(
-.AccountStorageMode.public(), // Public: faucet operations are transparent
-.false, // Immutable: faucet rules cannot be changed
-."MID", // Token symbol (like ETH, BTC, etc.)
-.8, // Decimals (8 means 1 MID = 100,000,000 base units)
-.BigInt(1_000_000), // Max supply: total tokens that can ever be minted
-.AuthScheme.AuthRpoFalcon512 // Auth Scheme: RPO Falcon 512
-);
+const faucetAccount = await client.accounts.create({
+.type: AccountType.FungibleFaucet, // Fungible faucet: can mint divisible tokens
+.symbol: 'MID', // Token symbol (like ETH, BTC, etc.)
+.decimals: 8, // Decimals (8 means 1 MID = 100,000,000 base units)
+.maxSupply: BigInt(1_000_000), // Max supply: total tokens that can ever be minted
+.storage: StorageMode.Public, // Public: faucet operations are transparent
+});
 console.log('Faucet account ID:', faucetAccount.id().toString());
 
 console.log('Setup complete.');` },
@@ -300,6 +299,7 @@ Your final `lib/react/createMintConsume.tsx` (React) or `lib/createMintConsume.t
 react: { code: `'use client';
 
 import { MidenProvider, useMiden, useCreateWallet, useCreateFaucet } from '@miden-sdk/react';
+import { StorageMode } from '@miden-sdk/miden-sdk';
 
 function CreateMintConsumeInner() {
 .const { isReady } = useMiden();
@@ -309,7 +309,7 @@ function CreateMintConsumeInner() {
 .const run = async () => {
 ..// 1. Create Alice's wallet (public, mutable)
 ..console.log('Creating account for Alice…');
-..const alice = await createWallet({ storageMode: 'public' });
+..const alice = await createWallet({ storageMode: StorageMode.Public });
 ..console.log('Alice ID:', alice.id().toString());
 
 ..// 2. Deploy a fungible faucet
@@ -318,7 +318,7 @@ function CreateMintConsumeInner() {
 ...tokenSymbol: 'MID',
 ...decimals: 8,
 ...maxSupply: BigInt(1_000_000),
-...storageMode: 'public',
+...storageMode: StorageMode.Public,
 ..});
 ..console.log('Faucet ID:', faucet.id().toString());
 
@@ -349,35 +349,34 @@ export async function createMintConsume(): Promise<void> {
 .}
 
 .// dynamic import → only in the browser, so WASM is loaded client‑side
-.const { WebClient, AccountStorageMode, AuthScheme } =
+.const { MidenClient, AccountType, StorageMode } =
 ..await import('@miden-sdk/miden-sdk');
 
-.const nodeEndpoint = 'https://rpc.testnet.miden.io';
-.const client = await WebClient.createClient(nodeEndpoint);
+.const client = await MidenClient.create({
+..rpcUrl: 'https://rpc.testnet.miden.io',
+.});
 
 .// 1. Sync with the latest blockchain state
-.const state = await client.syncState();
+.const state = await client.sync();
 .console.log('Latest block number:', state.blockNum());
 
 .// 2. Create Alice's account
 .console.log('Creating account for Alice…');
-.const alice = await client.newWallet(
-..AccountStorageMode.public(),
-..true,
-..AuthScheme.AuthRpoFalcon512,
-.);
+.const alice = await client.accounts.create({
+..type: AccountType.MutableWallet,
+..storage: StorageMode.Public,
+.});
 .console.log('Alice ID:', alice.id().toString());
 
 .// 3. Deploy a fungible faucet
 .console.log('Creating faucet…');
-.const faucet = await client.newFaucet(
-..AccountStorageMode.public(),
-..false,
-..'MID',
-..8,
-..BigInt(1_000_000),
-..AuthScheme.AuthRpoFalcon512,
-.);
+.const faucet = await client.accounts.create({
+..type: AccountType.FungibleFaucet,
+..symbol: 'MID',
+..decimals: 8,
+..maxSupply: BigInt(1_000_000),
+..storage: StorageMode.Public,
+.});
 .console.log('Faucet ID:', faucet.id().toString());
 
 .console.log('Setup complete.');

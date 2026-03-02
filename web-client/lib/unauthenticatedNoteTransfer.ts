@@ -9,173 +9,97 @@ export async function unauthenticatedNoteTransfer(): Promise<void> {
   if (typeof window === 'undefined') return console.warn('Run in browser');
 
   const {
-    WebClient,
-    AccountStorageMode,
-    AuthScheme,
-    NoteType,
-    TransactionProver,
-    Note,
-    NoteAssets,
-    OutputNoteArray,
-    FungibleAsset,
-    NoteAndArgsArray,
-    NoteAndArgs,
-    NoteAttachment,
-    TransactionRequestBuilder,
-    OutputNote,
+    MidenClient,
+    AccountType,
+    NoteVisibility,
+    StorageMode,
   } = await import('@miden-sdk/miden-sdk');
 
-  const client = await WebClient.createClient('https://rpc.testnet.miden.io');
-  const prover = TransactionProver.newLocalProver();
+  const client = await MidenClient.create({
+    rpcUrl: 'local',
+    proverUrl: 'local',
+  });
 
-  console.log('Latest block:', (await client.syncState()).blockNum());
+  console.log('Latest block:', (await client.sync()).blockNum());
 
   // ── Creating new account ──────────────────────────────────────────────────────
   console.log('Creating accounts');
 
   console.log('Creating account for Alice…');
-  const alice = await client.newWallet(
-    AccountStorageMode.public(),
-    true,
-    AuthScheme.AuthRpoFalcon512,
-  );
+  const alice = await client.accounts.create({
+    type: AccountType.MutableWallet,
+    storage: StorageMode.Public,
+  });
   console.log('Alice account ID:', alice.id().toString());
 
   const wallets = [];
   for (let i = 0; i < 5; i++) {
-    const wallet = await client.newWallet(
-      AccountStorageMode.public(),
-      true,
-      AuthScheme.AuthRpoFalcon512,
-    );
+    const wallet = await client.accounts.create({
+      type: AccountType.MutableWallet,
+      storage: StorageMode.Public,
+    });
     wallets.push(wallet);
     console.log('wallet ', i.toString(), wallet.id().toString());
   }
 
   // ── Creating new faucet ──────────────────────────────────────────────────────
-  const faucet = await client.newFaucet(
-    AccountStorageMode.public(),
-    false,
-    'MID',
-    8,
-    BigInt(1_000_000),
-    AuthScheme.AuthRpoFalcon512,
-  );
+  const faucet = await client.accounts.create({
+    type: AccountType.FungibleFaucet,
+    symbol: 'MID',
+    decimals: 8,
+    maxSupply: BigInt(1_000_000),
+    storage: StorageMode.Public,
+  });
   console.log('Faucet ID:', faucet.id().toString());
 
   // ── mint 10 000 MID to Alice ──────────────────────────────────────────────────────
-  {
-    const txResult = await client.executeTransaction(
-      faucet.id(),
-      client.newMintTransactionRequest(
-        alice.id(),
-        faucet.id(),
-        NoteType.Public,
-        BigInt(10_000),
-      ),
-    );
-    const proven = await client.proveTransaction(txResult, prover);
-    const submissionHeight = await client.submitProvenTransaction(
-      proven,
-      txResult,
-    );
-    await client.applyTransaction(txResult, submissionHeight);
-  }
+  const mintTxId = await client.transactions.mint({
+    account: faucet,
+    to: alice,
+    amount: BigInt(10_000),
+    type: NoteVisibility.Public,
+  });
 
   console.log('Waiting for settlement');
-  await new Promise((r) => setTimeout(r, 7_000));
-  await client.syncState();
+  await client.transactions.waitFor(mintTxId);
+  await client.sync();
 
   // ── Consume the freshly minted note ──────────────────────────────────────────────
-  const noteList = (await client.getConsumableNotes(alice.id())).map((rec) =>
-    rec.inputNoteRecord().toNote(),
-  );
-
-  {
-    const txResult = await client.executeTransaction(
-      alice.id(),
-      client.newConsumeTransactionRequest(noteList),
-    );
-    const proven = await client.proveTransaction(txResult, prover);
-    const submissionHeight = await client.submitProvenTransaction(
-      proven,
-      txResult,
-    );
-    await client.applyTransaction(txResult, submissionHeight);
-    await client.syncState();
-  }
+  const noteList = await client.notes.listAvailable({ account: alice });
+  await client.transactions.consume({
+    account: alice,
+    notes: noteList.map((n) => n.inputNoteRecord()),
+  });
+  await client.sync();
 
   // ── Create unauthenticated note transfer chain ─────────────────────────────────────────────
   // Alice → wallet 1 → wallet 2 → wallet 3 → wallet 4
   for (let i = 0; i < wallets.length; i++) {
     console.log(`\nUnauthenticated tx ${i + 1}`);
 
-    // Determine sender and receiver for this iteration
     const sender = i === 0 ? alice : wallets[i - 1];
     const receiver = wallets[i];
 
     console.log('Sender:', sender.id().toString());
     console.log('Receiver:', receiver.id().toString());
 
-    const assets = new NoteAssets([new FungibleAsset(faucet.id(), BigInt(50))]);
-    const p2idNote = Note.createP2IDNote(
-      sender.id(),
-      receiver.id(),
-      assets,
-      NoteType.Public,
-      new NoteAttachment(),
+    const { note } = await client.transactions.send({
+      account: sender,
+      to: receiver,
+      token: faucet,
+      amount: BigInt(50),
+      type: NoteVisibility.Public,
+      authenticated: false,
+    });
+
+    const consumeTxId = await client.transactions.consume({
+      account: receiver,
+      notes: [note],
+    });
+
+    console.log(
+      `Consumed Note Tx on MidenScan: https://testnet.midenscan.com/tx/${consumeTxId.toHex()}`,
     );
-
-    const outputP2ID = OutputNote.full(p2idNote);
-
-    console.log('Creating P2ID note...');
-    {
-      const builder = new TransactionRequestBuilder();
-      const request = builder.withOwnOutputNotes(new OutputNoteArray([outputP2ID])).build();
-      const txResult = await client.executeTransaction(
-        sender.id(),
-        request,
-      );
-      const proven = await client.proveTransaction(txResult, prover);
-      const submissionHeight = await client.submitProvenTransaction(
-        proven,
-        txResult,
-      );
-      await client.applyTransaction(txResult, submissionHeight);
-    }
-
-    console.log('Consuming P2ID note...');
-
-    const noteIdAndArgs = new NoteAndArgs(p2idNote, null);
-
-    const consumeBuilder = new TransactionRequestBuilder();
-    const consumeRequest = consumeBuilder.withInputNotes(new NoteAndArgsArray([noteIdAndArgs])).build();
-
-    {
-      const txResult = await client.executeTransaction(
-        receiver.id(),
-        consumeRequest,
-      );
-      const proven = await client.proveTransaction(txResult, prover);
-      const submissionHeight = await client.submitProvenTransaction(
-        proven,
-        txResult,
-      );
-      const txExecutionResult = await client.applyTransaction(
-        txResult,
-        submissionHeight,
-      );
-
-      const txId = txExecutionResult
-        .executedTransaction()
-        .id()
-        .toHex()
-        .toString();
-
-      console.log(
-        `Consumed Note Tx on MidenScan: https://testnet.midenscan.com/tx/${txId}`,
-      );
-    }
   }
 
   console.log('Asset transfer chain completed ✅');

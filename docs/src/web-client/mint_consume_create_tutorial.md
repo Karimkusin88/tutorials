@@ -45,56 +45,51 @@ const mintResult = await mint({
 .faucetId, // Faucet account (who mints the tokens)
 .targetAccountId: aliceId, // Target account (who receives the tokens)
 .amount: BigInt(1000), // Amount to mint (in base units)
-.noteType: 'public', // Note visibility (public = onchain)
+.noteType: NoteVisibility.Public, // Note visibility (public = onchain)
 });
 console.log('Mint tx:', mintResult.transactionId);
 
 // Wait for the mint transaction to be committed
 await waitForCommit(mintResult.transactionId);`},
   typescript: { code:`// 4. Mint tokens from the faucet to Alice
-await client.syncState();
+await client.sync();
 
 console.log("Minting tokens to Alice...");
-const mintTxRequest = client.newMintTransactionRequest(
-.alice.id(), // Target account (who receives the tokens)
-.faucet.id(), // Faucet account (who mints the tokens)
-.NoteType.Public, // Note visibility (public = onchain)
-.BigInt(1000), // Amount to mint (in base units)
-);
-
-await client.submitNewTransaction(faucet.id(), mintTxRequest);
+const mintTxId = await client.transactions.mint({
+.account: faucet, // Faucet account (who mints the tokens)
+.to: alice, // Target account (who receives the tokens)
+.amount: BigInt(1000), // Amount to mint (in base units)
+.type: NoteVisibility.Public, // Note visibility (public = onchain)
+});
 
 // Wait for the transaction to be processed
-console.log("Waiting 10 seconds for transaction confirmation...");
-await new Promise((resolve) => setTimeout(resolve, 10000));
-await client.syncState();` },
+console.log("Waiting for transaction confirmation...");
+await client.transactions.waitFor(mintTxId);
+await client.sync();` },
 }} reactFilename="lib/react/createMintConsume.tsx" tsFilename="lib/createMintConsume.ts" />
 
 ### What's happening here?
 
-1. **newMintTransactionRequest**: Creates a request to mint tokens to Alice. Note that this is only possible to submit transactions on the faucets' behalf if the user controls the faucet (i.e. its keys are stored in the client).
-2. **newTransaction**: Locally executes and proves the transaction.
-3. **submitTransaction**: Sends the transaction to the network.
-4. Wait 10 seconds for the transaction to be included in a block.
+1. **client.transactions.mint()**: Creates, proves, and submits a mint transaction to Alice. Note that this is only possible to submit transactions on the faucets' behalf if the user controls the faucet (i.e. its keys are stored in the client).
+2. **client.transactions.waitFor()**: Polls until the transaction is committed on-chain.
 
 ## Step 2: Find consumable notes
 
 After minting, Alice has a note waiting for her but the tokens aren't in her account yet.
-To identify notes that are ready to consume, the Miden WebClient provides the `getConsumableNotes` function:
+To identify notes that are ready to consume, the MidenClient provides the `client.notes.listAvailable()` method:
 
 <CodeSdkTabs example={{
 react: { code: `// 4. Wait for consumable notes to appear
 const notes = await waitForConsumableNotes({ accountId: aliceId });
-const noteIds = notes.map((n) => n.inputNoteRecord().id().toString());
-console.log('Consumable notes:', noteIds);` },
+const noteIds = notes.map((n) => n.inputNoteRecord().id());
+console.log('Consumable notes:', noteIds.length);` },
 typescript: { code: `// 5. Find notes available for consumption
-const mintedNotes = await client.getConsumableNotes(alice.id());
+const mintedNotes = await client.notes.listAvailable({ account: alice });
 console.log(\`Found \${mintedNotes.length} note(s) to consume\`);
 
-const mintedNoteList = mintedNotes.map((n) => n.inputNoteRecord().toNote());
 console.log(
 .'Minted notes:',
-.mintedNoteList.map((note) => note.id().toString()),
+.mintedNotes.map((n) => n.inputNoteRecord().id().toString()),
 );` },
 }} reactFilename="lib/react/createMintConsume.tsx" tsFilename="lib/createMintConsume.ts" />
 
@@ -109,11 +104,12 @@ await consume({ accountId: aliceId, noteIds });
 console.log('Notes consumed.');` },
 typescript: { code: `// 6. Consume the notes to add tokens to Alice's balance
 console.log('Consuming minted notes...');
-const consumeTxRequest = client.newConsumeTransactionRequest(mintedNoteList);
+await client.transactions.consume({
+.account: alice,
+.notes: mintedNotes.map((n) => n.inputNoteRecord()),
+});
 
-await client.submitNewTransaction(alice.id(), consumeTxRequest);
-
-await client.syncState();
+await client.sync();
 console.log('Notes consumed.');` },
 }} reactFilename="lib/react/createMintConsume.tsx" tsFilename="lib/createMintConsume.ts" />
 
@@ -134,24 +130,20 @@ await send({
 .to: bobAddress,
 .assetId: faucetId,
 .amount: BigInt(100),
-.noteType: 'public',
+.noteType: NoteVisibility.Public,
 });
 console.log('Tokens sent successfully!');` },
 typescript: { code: `// 7. Send tokens from Alice to Bob
-const bobAccountId = Address.fromBech32(
-.'mtst1apve54rq8ux0jqqqqrkh5y0r0y8cwza6_qruqqypuyph',
-).accountId();
+const bobAddress = 'mtst1apve54rq8ux0jqqqqrkh5y0r0y8cwza6_qruqqypuyph';
 console.log("Sending tokens to Bob's account...");
 
-const sendTxRequest = client.newSendTransactionRequest(
-.alice.id(), // Sender account ID
-.bobAccountId, // Recipient account ID
-.faucet.id(), // Asset ID (faucet that created the tokens)
-.NoteType.Public, // Note visibility
-.BigInt(100), // Amount to send
-);
-
-await client.submitNewTransaction(alice.id(), sendTxRequest);
+await client.transactions.send({
+.account: alice, // Sender account ID
+.to: bobAddress, // Recipient (bech32 address)
+.token: faucet, // Asset ID (faucet that created the tokens)
+.amount: BigInt(100), // Amount to send
+.type: NoteVisibility.Public, // Note visibility
+});
 
 console.log('Tokens sent successfully!');` },
 }} reactFilename="lib/react/createMintConsume.tsx" tsFilename="lib/createMintConsume.ts" />
@@ -172,6 +164,7 @@ Here's the complete `lib/react/createMintConsume.tsx` (React) or `lib/createMint
 react: { code: `'use client';
 
 import { MidenProvider, useMiden, useCreateWallet, useCreateFaucet, useMint, useConsume, useSend, useWaitForCommit, useWaitForNotes } from '@miden-sdk/react';
+import { NoteVisibility, StorageMode } from '@miden-sdk/miden-sdk';
 
 function CreateMintConsumeInner() {
 .const { isReady } = useMiden();
@@ -186,7 +179,7 @@ function CreateMintConsumeInner() {
 .const run = async () => {
 ..// 1. Create Alice's wallet (public, mutable)
 ..console.log('Creating account for Alice…');
-..const alice = await createWallet({ storageMode: 'public' });
+..const alice = await createWallet({ storageMode: StorageMode.Public });
 ..const aliceId = alice.id().toString();
 ..console.log('Alice ID:', aliceId);
 
@@ -196,7 +189,7 @@ function CreateMintConsumeInner() {
 ...tokenSymbol: 'MID',
 ...decimals: 8,
 ...maxSupply: BigInt(1_000_000),
-...storageMode: 'public',
+...storageMode: StorageMode.Public,
 ..});
 ..const faucetId = faucet.id().toString();
 ..console.log('Faucet ID:', faucetId);
@@ -207,7 +200,7 @@ function CreateMintConsumeInner() {
 ...faucetId,
 ...targetAccountId: aliceId,
 ...amount: BigInt(1000),
-...noteType: 'public',
+...noteType: NoteVisibility.Public,
 ..});
 ..console.log('Mint tx:', mintResult.transactionId);
 
@@ -216,8 +209,8 @@ function CreateMintConsumeInner() {
 
 ..// 5. Wait for consumable notes to appear
 ..const notes = await waitForConsumableNotes({ accountId: aliceId });
-..const noteIds = notes.map((n) => n.inputNoteRecord().id().toString());
-..console.log('Consumable notes:', noteIds);
+..const noteIds = notes.map((n) => n.inputNoteRecord().id());
+..console.log('Consumable notes:', noteIds.length);
 
 ..// 6. Consume minted notes
 ..console.log('Consuming minted notes...');
@@ -232,7 +225,7 @@ function CreateMintConsumeInner() {
 ...to: bobAddress,
 ...assetId: faucetId,
 ...amount: BigInt(100),
-...noteType: 'public',
+...noteType: NoteVisibility.Public,
 ..});
 ..console.log('Tokens sent successfully!');
 .};
@@ -261,90 +254,78 @@ export async function createMintConsume(): Promise<void> {
 .}
 
 .// dynamic import → only in the browser, so WASM is loaded client‑side
-.const { WebClient, AccountStorageMode, AuthScheme, NoteType, Address } =
-..await import('@miden-sdk/miden-sdk');
+.const { MidenClient, AccountType, NoteVisibility, StorageMode } = await import('@miden-sdk/miden-sdk');
 
-.const nodeEndpoint = 'https://rpc.testnet.miden.io';
-.const client = await WebClient.createClient(nodeEndpoint);
+.const client = await MidenClient.create({
+..rpcUrl: 'https://rpc.testnet.miden.io',
+.});
 
 .// 1. Sync with the latest blockchain state
-.const state = await client.syncState();
+.const state = await client.sync();
 .console.log('Latest block number:', state.blockNum());
 
 .// 2. Create Alice's account
 .console.log('Creating account for Alice…');
-.const aliceSeed = new Uint8Array(32);
-.crypto.getRandomValues(aliceSeed);
-.const alice = await client.newWallet(
-..AccountStorageMode.public(),
-..true,
-..AuthScheme.AuthRpoFalcon512,
-..aliceSeed,
-.);
+.const alice = await client.accounts.create({
+..type: AccountType.MutableWallet,
+..storage: StorageMode.Public,
+.});
 .console.log('Alice ID:', alice.id().toString());
 
 .// 3. Deploy a fungible faucet
 .console.log('Creating faucet…');
-.const faucet = await client.newFaucet(
-..AccountStorageMode.public(),
-..false,
-..'MID',
-..8,
-..BigInt(1_000_000),
-..AuthScheme.AuthRpoFalcon512,
-.);
+.const faucet = await client.accounts.create({
+..type: AccountType.FungibleFaucet,
+..symbol: 'MID',
+..decimals: 8,
+..maxSupply: BigInt(1_000_000),
+..storage: StorageMode.Public,
+.});
 .console.log('Faucet ID:', faucet.id().toString());
 
-.await client.syncState();
+.await client.sync();
 
 .// 4. Mint tokens to Alice
-.await client.syncState();
 
 .console.log('Minting tokens to Alice...');
-.const mintTxRequest = client.newMintTransactionRequest(
-..alice.id(),
-..faucet.id(),
-..NoteType.Public,
-..BigInt(1000),
-.);
+.const mintTxId = await client.transactions.mint({
+..account: faucet,
+..to: alice,
+..amount: BigInt(1000),
+..type: NoteVisibility.Public,
+.});
 
-.await client.submitNewTransaction(faucet.id(), mintTxRequest);
-
-.console.log('Waiting 10 seconds for transaction confirmation...');
-.await new Promise((resolve) => setTimeout(resolve, 10000));
-.await client.syncState();
+.console.log('Waiting for transaction confirmation...');
+.await client.transactions.waitFor(mintTxId);
+.await client.sync();
 
 .// 5. Fetch minted notes
-.const mintedNotes = await client.getConsumableNotes(alice.id());
-.const mintedNoteList = mintedNotes.map((n) => n.inputNoteRecord().toNote());
+.const mintedNotes = await client.notes.listAvailable({ account: alice });
 .console.log(
 ..'Minted notes:',
-..mintedNoteList.map((note) => note.id().toString()),
+..mintedNotes.map((n) => n.inputNoteRecord().id().toString()),
 .);
 
 .// 6. Consume minted notes
 .console.log('Consuming minted notes...');
-.const consumeTxRequest = client.newConsumeTransactionRequest(mintedNoteList);
+.await client.transactions.consume({
+..account: alice,
+..notes: mintedNotes.map((n) => n.inputNoteRecord()),
+.});
 
-.await client.submitNewTransaction(alice.id(), consumeTxRequest);
-
-.await client.syncState();
+.await client.sync();
 .console.log('Notes consumed.');
 
 .// 7. Send tokens to Bob
-.const bobAccountId = Address.fromBech32(
-..'mtst1apve54rq8ux0jqqqqrkh5y0r0y8cwza6_qruqqypuyph',
-.).accountId();
+.const bobAddress = 'mtst1apve54rq8ux0jqqqqrkh5y0r0y8cwza6_qruqqypuyph';
 .console.log("Sending tokens to Bob's account...");
-.const sendTxRequest = client.newSendTransactionRequest(
-..alice.id(),
-..bobAccountId,
-..faucet.id(),
-..NoteType.Public,
-..BigInt(100),
-.);
-
-.await client.submitNewTransaction(alice.id(), sendTxRequest);
+.await client.transactions.send({
+..account: alice,
+..to: bobAddress,
+..token: faucet,
+..amount: BigInt(100),
+..type: NoteVisibility.Public,
+.});
 .console.log('Tokens sent successfully!');
 }` },
 }} reactFilename="lib/react/createMintConsume.tsx" tsFilename="lib/createMintConsume.ts" />

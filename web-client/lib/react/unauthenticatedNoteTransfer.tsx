@@ -4,7 +4,8 @@
 // lib/unauthenticatedNoteTransfer.ts is used for Playwright tests instead.
 'use client';
 
-import { MidenProvider, useMiden, useCreateWallet, useCreateFaucet, useMint, useConsume, useInternalTransfer, useWaitForCommit, useWaitForNotes } from '@miden-sdk/react';
+import { MidenProvider, useMiden, useCreateWallet, useCreateFaucet, useMint, useConsume, useSend, useWaitForCommit, useWaitForNotes, type Account } from '@miden-sdk/react';
+import { NoteVisibility, StorageMode } from '@miden-sdk/miden-sdk';
 
 function UnauthenticatedNoteTransferInner() {
   const { isReady } = useMiden();
@@ -12,22 +13,21 @@ function UnauthenticatedNoteTransferInner() {
   const { createFaucet } = useCreateFaucet();
   const { mint } = useMint();
   const { consume } = useConsume();
-  const { transferChain } = useInternalTransfer();
+  const { send } = useSend();
   const { waitForCommit } = useWaitForCommit();
   const { waitForConsumableNotes } = useWaitForNotes();
 
   const run = async () => {
     // 1. Create Alice and 5 wallets for the transfer chain
     console.log('Creating accounts…');
-    const alice = await createWallet({ storageMode: 'public' });
-    const aliceId = alice.id().toString();
-    console.log('Alice account ID:', aliceId);
+    const alice = await createWallet({ storageMode: StorageMode.Public });
+    console.log('Alice account ID:', alice.id().toString());
 
-    const walletIds: string[] = [];
+    const wallets: Account[] = [];
     for (let i = 0; i < 5; i++) {
-      const wallet = await createWallet({ storageMode: 'public' });
-      walletIds.push(wallet.id().toString());
-      console.log(`Wallet ${i}:`, walletIds[i]);
+      const wallet = await createWallet({ storageMode: StorageMode.Public });
+      wallets.push(wallet);
+      console.log(`Wallet ${i}:`, wallet.id().toString());
     }
 
     // 2. Deploy a fungible faucet
@@ -35,43 +35,48 @@ function UnauthenticatedNoteTransferInner() {
       tokenSymbol: 'MID',
       decimals: 8,
       maxSupply: BigInt(1_000_000),
-      storageMode: 'public',
+      storageMode: StorageMode.Public,
     });
-    const faucetId = faucet.id().toString();
-    console.log('Faucet ID:', faucetId);
+    console.log('Faucet ID:', faucet.id().toString());
 
     // 3. Mint 10,000 MID to Alice
     const mintResult = await mint({
-      faucetId,
-      targetAccountId: aliceId,
+      faucetId: faucet,
+      targetAccountId: alice,
       amount: BigInt(10_000),
-      noteType: 'public',
+      noteType: NoteVisibility.Public,
     });
 
     console.log('Waiting for settlement…');
     await waitForCommit(mintResult.transactionId);
 
     // 4. Consume the freshly minted notes
-    const notes = await waitForConsumableNotes({ accountId: aliceId });
-    const noteIds = notes.map((n) => n.inputNoteRecord().id().toString());
-    await consume({ accountId: aliceId, noteIds });
+    const notes = await waitForConsumableNotes({ accountId: alice });
+    const noteIds = notes.map((n) => n.inputNoteRecord().id());
+    await consume({ accountId: alice, noteIds });
 
     // 5. Create the unauthenticated note transfer chain:
     //    Alice → Wallet 0 → Wallet 1 → Wallet 2 → Wallet 3 → Wallet 4
     console.log('Starting unauthenticated transfer chain…');
-    const results = await transferChain({
-      from: aliceId,
-      recipients: walletIds,
-      assetId: faucetId,
-      amount: BigInt(50),
-      noteType: 'public',
-    });
+    let currentSender: Account = alice;
+    for (let i = 0; i < wallets.length; i++) {
+      const wallet = wallets[i];
+      const { note } = await send({
+        from: currentSender,
+        to: wallet,
+        assetId: faucet,
+        amount: BigInt(50),
+        noteType: NoteVisibility.Public,
+        authenticated: false,
+      });
 
-    results.forEach((r, i) => {
+      const result = await consume({ accountId: wallet, noteIds: [note!] });
       console.log(
-        `Transfer ${i + 1}: https://testnet.midenscan.com/tx/${r.consumeTransactionId}`,
+        `Transfer ${i + 1}: https://testnet.midenscan.com/tx/${result.transactionId}`,
       );
-    });
+
+      currentSender = wallet;
+    }
 
     console.log('Asset transfer chain completed ✅');
   };
