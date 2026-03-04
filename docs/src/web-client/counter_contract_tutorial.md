@@ -96,12 +96,91 @@ export default function Home() {
 }
 ```
 
-## Step 3 — Incrementing the Count of the Counter Contract
+## Step 3: Write the MASM Counter Contract
 
-Create the file `lib/incrementCounterContract.ts` and add the following code.
+The counter contract code lives in a separate `.masm` file. Create a `lib/masm/` directory and add the contract file:
 
+```bash
+mkdir -p lib/masm
 ```
-mkdir -p lib
+
+Create the file `lib/masm/counter_contract.masm` with the following Miden Assembly code:
+
+```masm
+use miden::protocol::active_account
+use miden::protocol::native_account
+use miden::core::word
+use miden::core::sys
+
+const COUNTER_SLOT = word("miden::tutorials::counter")
+
+#! Inputs:  []
+#! Outputs: [count]
+pub proc get_count
+    push.COUNTER_SLOT[0..2] exec.active_account::get_item
+    # => [count]
+
+    exec.sys::truncate_stack
+    # => [count]
+end
+
+#! Inputs:  []
+#! Outputs: []
+pub proc increment_count
+    push.COUNTER_SLOT[0..2] exec.active_account::get_item
+    # => [count]
+
+    add.1
+    # => [count+1]
+
+    push.COUNTER_SLOT[0..2] exec.native_account::set_item
+    # => []
+
+    exec.sys::truncate_stack
+    # => []
+end
+```
+
+Also create `lib/masm/masm.d.ts` so TypeScript recognizes `.masm` imports:
+
+```ts
+declare module '*.masm' {
+  const content: string;
+  export default content;
+}
+```
+
+## Step 4: Configure Your Bundler to Import `.masm` Files
+
+Add an `asset/source` webpack rule so `.masm` files are imported as plain text strings.
+
+Open `next.config.ts` and add the following rule inside the `webpack` callback:
+
+```ts
+webpack: (config, { isServer }) => {
+  // ... existing WASM config ...
+
+  // Import .masm files as strings
+  config.module.rules.push({
+    test: /\.masm$/,
+    type: "asset/source",
+  });
+
+  return config;
+},
+```
+
+:::tip Other bundlers
+
+- **Vite:** use the `?raw` suffix — `import code from './masm/counter_contract.masm?raw'`
+- **Other bundlers / no bundler:** use `fetch()` at runtime — `const code = await fetch('/masm/counter_contract.masm').then(r => r.text())`
+  :::
+
+## Step 5: Incrementing the Count of the Counter Contract
+
+Create the file `lib/incrementCounterContract.ts`:
+
+```bash
 touch lib/incrementCounterContract.ts
 ```
 
@@ -109,6 +188,8 @@ Copy and paste the following code into the `lib/incrementCounterContract.ts` fil
 
 ```ts
 // lib/incrementCounterContract.ts
+import counterContractCode from './masm/counter_contract.masm';
+
 export async function incrementCounterContract(): Promise<void> {
   if (typeof window === 'undefined') {
     console.warn('webClient() can only run in the browser');
@@ -116,64 +197,17 @@ export async function incrementCounterContract(): Promise<void> {
   }
 
   // dynamic import → only in the browser, so WASM is loaded client‑side
-  const {
-    AccountType,
-    Address,
-    AuthSecretKey,
-    StorageMode,
-    StorageSlot,
-    MidenClient,
-  } = await import('@miden-sdk/miden-sdk');
+  const { AccountType, AuthSecretKey, StorageMode, StorageSlot, MidenClient } =
+    await import('@miden-sdk/miden-sdk');
 
   const nodeEndpoint = 'https://rpc.testnet.miden.io';
   const client = await MidenClient.create({ rpcUrl: nodeEndpoint });
   console.log('Current block number: ', (await client.sync()).blockNum());
 
-  // Counter contract code in Miden Assembly
-  const counterContractCode = `
-    use miden::protocol::active_account
-    use miden::protocol::native_account
-    use miden::core::word
-    use miden::core::sys
-
-    const COUNTER_SLOT = word("miden::tutorials::counter")
-
-    #! Inputs:  []
-    #! Outputs: [count]
-    pub proc get_count
-        push.COUNTER_SLOT[0..2] exec.active_account::get_item
-        # => [count]
-
-        exec.sys::truncate_stack
-        # => [count]
-    end
-
-    #! Inputs:  []
-    #! Outputs: []
-    pub proc increment_count
-        push.COUNTER_SLOT[0..2] exec.active_account::get_item
-        # => [count]
-
-        add.1
-        # => [count+1]
-
-        push.COUNTER_SLOT[0..2] exec.native_account::set_item
-        # => []
-
-        exec.sys::truncate_stack
-        # => []
-    end
-`;
-
-  // Counter contract account id on testnet
-  const counterContractId = Address.fromBech32(
+  // Import the counter contract from testnet by its bech32 address
+  const counterContractAccount = await client.accounts.getOrImport(
     'mtst1arjemrxne8lj5qz4mg9c8mtyxg954483',
-  ).accountId();
-
-  // Reading the public state of the counter contract from testnet,
-  // and importing it into the client
-  const counterContractAccount =
-    await client.accounts.getOrImport(counterContractId);
+  );
 
   const counterSlotName = 'miden::tutorials::counter';
 
@@ -196,8 +230,6 @@ export async function incrementCounterContract(): Promise<void> {
     auth,
     components: [counterAccountComponent],
   });
-
-  await client.sync();
 
   // Building the transaction script which will call the counter contract
   const txScriptCode = `
@@ -223,9 +255,6 @@ export async function incrementCounterContract(): Promise<void> {
     script,
   });
 
-  // Sync state
-  await client.sync();
-
   // Logging the count of counter contract
   const counter = await client.accounts.get(counterContractAccount.id());
 
@@ -233,10 +262,7 @@ export async function incrementCounterContract(): Promise<void> {
   // A word is comprised of 4 Felts, 2**64 - 2**32 + 1
   const count = counter?.storage().getItem(counterSlotName);
 
-  // Converting the Word represented as a hex to a single integer value
-  const counterValue = Number(
-    BigInt('0x' + count!.toHex().slice(-16).match(/../g)!.reverse().join('')),
-  );
+  const counterValue = Number(count!.toU64s()[3]);
 
   console.log('Count: ', counterValue);
 }

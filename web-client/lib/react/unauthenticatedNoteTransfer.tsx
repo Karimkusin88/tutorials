@@ -52,8 +52,7 @@ function UnauthenticatedNoteTransferInner() {
 
     // 4. Consume the freshly minted notes
     const notes = await waitForConsumableNotes({ accountId: alice });
-    const noteIds = notes.map((n) => n.inputNoteRecord().id());
-    await consume({ accountId: alice, noteIds });
+    await consume({ accountId: alice, notes });
 
     // 5. Create the unauthenticated note transfer chain:
     //    Alice → Wallet 0 → Wallet 1 → Wallet 2 → Wallet 3 → Wallet 4
@@ -67,10 +66,10 @@ function UnauthenticatedNoteTransferInner() {
         assetId: faucet,
         amount: BigInt(50),
         noteType: NoteVisibility.Public,
-        authenticated: false,
+        returnNote: true,
       });
 
-      const result = await consume({ accountId: wallet, noteIds: [note!] });
+      const result = await consume({ accountId: wallet, notes: [note!] });
       console.log(
         `Transfer ${i + 1}: https://testnet.midenscan.com/tx/${result.transactionId}`,
       );

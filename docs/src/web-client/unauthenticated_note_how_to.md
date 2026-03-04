@@ -210,8 +210,7 @@ function UnauthenticatedNoteTransferInner() {
 
 ..// 4. Consume the freshly minted notes
 ..const notes = await waitForConsumableNotes({ accountId: alice });
-..const noteIds = notes.map((n) => n.inputNoteRecord().id());
-..await consume({ accountId: alice, noteIds });
+..await consume({ accountId: alice, notes });
 
 ..// 5. Create the unauthenticated note transfer chain:
 ..// Alice → Wallet 0 → Wallet 1 → Wallet 2 → Wallet 3 → Wallet 4
@@ -225,9 +224,9 @@ function UnauthenticatedNoteTransferInner() {
 ....assetId: faucet,
 ....amount: BigInt(50),
 ....noteType: NoteVisibility.Public,
-....authenticated: false,
+....returnNote: true,
 ...});
-...const result = await consume({ accountId: wallet, noteIds: [note] });
+...const result = await consume({ accountId: wallet, notes: [note] });
 ...console.log(
 ....\`Transfer \${i + 1}: https://testnet.midenscan.com/tx/\${result.transactionId}\`,
 ...);
@@ -315,15 +314,13 @@ export async function unauthenticatedNoteTransfer(): Promise<void> {
 
 .console.log('Waiting for settlement');
 .await client.transactions.waitFor(mintTxId);
-.await client.sync();
 
 .// ── Consume the freshly minted note ──────────────────────────────────────────────
 .const noteList = await client.notes.listAvailable({ account: alice });
 .await client.transactions.consume({
 ..account: alice,
-..notes: noteList.map((n) => n.inputNoteRecord()),
+..notes: noteList,
 .});
-.await client.sync();
 
 .// ── Create unauthenticated note transfer chain ─────────────────────────────────────────────
 .// Alice → wallet 1 → wallet 2 → wallet 3 → wallet 4
@@ -342,7 +339,7 @@ export async function unauthenticatedNoteTransfer(): Promise<void> {
 ...token: faucet,
 ...amount: BigInt(50),
 ...type: NoteVisibility.Public,
-...authenticated: false,
+...returnNote: true,
 ..});
 
 ..const consumeTxId = await client.transactions.consume({

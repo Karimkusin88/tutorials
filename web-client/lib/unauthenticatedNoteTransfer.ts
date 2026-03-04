@@ -62,15 +62,13 @@ export async function unauthenticatedNoteTransfer(): Promise<void> {
 
   console.log('Waiting for settlement');
   await client.transactions.waitFor(mintTxId);
-  await client.sync();
 
   // ── Consume the freshly minted note ──────────────────────────────────────────────
   const noteList = await client.notes.listAvailable({ account: alice });
   await client.transactions.consume({
     account: alice,
-    notes: noteList.map((n) => n.inputNoteRecord()),
+    notes: noteList,
   });
-  await client.sync();
 
   // ── Create unauthenticated note transfer chain ─────────────────────────────────────────────
   // Alice → wallet 1 → wallet 2 → wallet 3 → wallet 4
@@ -89,7 +87,7 @@ export async function unauthenticatedNoteTransfer(): Promise<void> {
       token: faucet,
       amount: BigInt(50),
       type: NoteVisibility.Public,
-      authenticated: false,
+      returnNote: true,
     });
 
     const consumeTxId = await client.transactions.consume({
